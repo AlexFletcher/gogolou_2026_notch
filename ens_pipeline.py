@@ -31,23 +31,23 @@ Requires: numpyro, jax (inference); matplotlib, numpy (figures).
 """
 import os, csv, glob, re, time, argparse
 import numpy as np
-
+ 
 # ============================ CONFIG =================================
-HUCD_CSV = "/empirical_data/cellmarker_hucd.csv"
-PG_CSV   = "/empirical_data/cellmarker_sox10_s100b.csv"
+HUCD_CSV = "/mnt/user-data/uploads/cellmarker_hucd.csv"
+PG_CSV   = "/mnt/user-data/uploads/cellmarker_sox10_s100b.csv"
 CHAIN    = "nuts_{cond}_{model}.npz"          # posterior chain filename pattern
-OUTDIR   = "/outputs"
+OUTDIR   = "/mnt/user-data/outputs"
 NDRAW    = 50                                  # posterior draws shown in S3/S4 A-D
 WARMUP, SAMPLES, CHAINS, TARGET = 1200, 1000, 4, 0.92
 rng = np.random.default_rng(0)
-
+ 
 MODELS  = {"CC": (False, False), "CV": (False, True),
            "VC": (True, False),  "VV": (True, True)}     # (rate varying?, bias varying?)
 ORDER4  = ["CC", "VC", "CV", "VV"]                        # display / panel order
 DAYS    = [15, 22]
 T0, DT, NSTEP = 9.0, 0.25, int(round((22 - 9.0) / 0.25))  # forward-solve grid (inference)
 IDX = {15: 23, 22: 51}                                    # trajectory indices for D15/D22
-
+ 
 # lazy jax/numpyro (so --figures works without them installed)
 try:
     import jax, jax.numpy as jnp
@@ -59,11 +59,11 @@ try:
     _HAVE_JAX = True
 except Exception:
     _HAVE_JAX = False
-
+ 
 # ============================ DATA ==================================
 def _read(path):
     return list(csv.DictReader(open(path, newline="", encoding="utf-8-sig")))
-
+ 
 def load_recs():
     """Aggregate field counts to per-biological-replicate counts (for inference)."""
     recs = {}
@@ -77,14 +77,14 @@ def load_recs():
     for d in recs.values():
         if "M_PG" in d: d["nR"] = max(d["M_PG"] - d.get("nP", 0) - d.get("nG", 0), 0)
     return {k: v for k, v in recs.items() if "M_N" in v and "M_PG" in v}
-
+ 
 def _fields(rows, valcol):
     o = {}
     for r in rows:
         c = r["condition"].strip().lower(); d = int(r["day"]); tot = float(r["total_cells"])
         if tot > 0: o.setdefault((c, d), []).append((int(r["bio_rep"]), float(r[valcol]) / tot))
     return o
-
+ 
 _DATA = None
 def _data():
     global _DATA
@@ -97,7 +97,7 @@ def biol(cell, cond, day):
     d = {}
     for b, f in _data()[cell].get((cond, day), []): d.setdefault(b, []).append(f)
     return np.array([np.mean(v) for v in d.values()])
-
+ 
 # ===================== FORWARD MODEL (JAX, inference) ===============
 def jax_forward(P0, k0, k1, r0, r1, tvk, tvr, alpha, aU):
     def kf(t): return k0 + (k1 * (t - T0) if tvk else 0.0)
@@ -120,7 +120,7 @@ def jax_forward(P0, k0, k1, r0, r1, tvk, tvr, alpha, aU):
         P, N, G, U = Ps[ix], Ns[ix], Gs[ix], Us[ix]; T = P + N + G + U
         return jnp.array([P / T, N / T, G / T, U / T])
     return jnp.stack([fr(IDX[15]), fr(IDX[22])])          # (2,4): rows D15,D22; cols P,N,G,U
-
+ 
 # ===================== FORWARD MODEL (numpy, figures) ==============
 def sim_traj(P0, k0, k1, r0, r1, alpha, aU, tvk, tvr, ts, dt=0.05):
     P, N, G, U = P0, 1e-12, 1e-12, 1 - P0; t = 9.0; i = 0; out = {"P": [], "N": [], "G": []}; tg = list(ts)
@@ -131,7 +131,7 @@ def sim_traj(P0, k0, k1, r0, r1, alpha, aU, tvk, tvr, ts, dt=0.05):
         P = max(P + dt*(alpha-k)*P, 1e-12); N = max(N + dt*k*rho*P, 1e-12)
         G = max(G + dt*k*(1-rho)*P, 1e-12); U = max(U + dt*aU*U, 1e-12); t += dt
     return {c: np.array(v) for c, v in out.items()}
-
+ 
 def chain(cond, m): return np.load(CHAIN.format(cond=cond, model=m))
 def col(ch, key):   return ch[key].reshape(-1) if key in ch.files else None
 def med(cond, m, key):
@@ -141,7 +141,7 @@ def sim_median(cond, m, ts):
     return sim_traj(med(cond, m, "P0"), med(cond, m, "k0"), med(cond, m, "k1"),
                     med(cond, m, "rho0"), med(cond, m, "rho1"), med(cond, m, "alpha"), med(cond, m, "aU"),
                     tvk, tvr, ts)
-
+ 
 # ========================= NUTS INFERENCE ===========================
 def make_model(tvk, tvr, fixed_P0=None):
     def model(nb_didx, nb_M, nb_y, dm_didx, dm_M, dm_cnt):
@@ -166,7 +166,7 @@ def make_model(tvk, tvr, fixed_P0=None):
         with numpyro.plate("dm", dm_cnt.shape[0]):
             numpyro.sample("pg_obs", dist.DirichletMultinomial(conc, total_count=dm_M), obs=dm_cnt)
     return model
-
+ 
 def cond_arrays(recs, cond):
     nb_didx = []; nb_M = []; nb_y = []; dm_didx = []; dm_M = []; dm_cnt = []; dmap = {15: 0, 22: 1}
     for d in DAYS:
@@ -177,7 +177,7 @@ def cond_arrays(recs, cond):
             dm_didx.append(dmap[d]); dm_M.append(v["M_PG"]); dm_cnt.append([v["nP"], v["nG"], v["nR"]])
     return (jnp.array(nb_didx), jnp.array(nb_M), jnp.array(nb_y, dtype=jnp.int32),
             jnp.array(dm_didx), jnp.array(dm_M), jnp.array(dm_cnt, dtype=jnp.int32))
-
+ 
 def fit(recs, cond, m, fixed_P0=None, seed=0):
     tvk, tvr = MODELS[m]; args = cond_arrays(recs, cond)
     kernel = NUTS(make_model(tvk, tvr, fixed_P0), target_accept_prob=TARGET)
@@ -185,7 +185,7 @@ def fit(recs, cond, m, fixed_P0=None, seed=0):
                 chain_method="vectorized", progress_bar=False)
     mcmc.run(jax.random.PRNGKey(seed), *args)
     post = mcmc.get_samples(group_by_chain=True); return post, npsummary(post)
-
+ 
 def run_inference():
     if not _HAVE_JAX:
         raise SystemExit("NumPyro/JAX not available — install them to run inference (figures still work with existing chains).")
@@ -212,7 +212,7 @@ def run_inference():
         lines += _diag_block("DAPT [P0 fixed]", m, S, REPORT, fixed_P0=dmso_P0[m])
     open(f"{OUTDIR}/nuts_full_diagnostics.txt", "w").write("\n".join(lines))
     print("inference complete; chains + diagnostics written")
-
+ 
 def _diag_block(tag, m, S, REPORT, fixed_P0=None):
     wr = max(float(S[p]["r_hat"]) for p in S if p not in ("y_obs", "pg_obs"))
     me = min(float(S[p]["n_eff"]) for p in S if p not in ("y_obs", "pg_obs"))
@@ -224,7 +224,7 @@ def _diag_block(tag, m, S, REPORT, fixed_P0=None):
         elif p == "P0" and fixed_P0 is not None:
             out.append(f"   {p:6s}: {fixed_P0:.3f}  [fixed to DMSO value]")
     return out + [""]
-
+ 
 # ============================ FIGURES ===============================
 import matplotlib
 matplotlib.use("Agg")
@@ -234,7 +234,7 @@ from matplotlib.lines import Line2D
 matplotlib.rcParams["font.family"] = "sans-serif"
 matplotlib.rcParams["font.sans-serif"] = ["Liberation Sans", "Arial", "DejaVu Sans"]
 matplotlib.rcParams["svg.fonttype"] = "none"
-
+ 
 # exact manuscript palette (light = DMSO, dark = DAPT)
 CELL = {"dmso": {"P": "#603C90", "N": "#D89C18", "G": "#1878B4"},
         "dapt": {"P": "#301848", "N": "#84600C", "G": "#0C3C60"}}
@@ -247,16 +247,16 @@ VRATE, VBIAS = ["VC", "VV"], ["CV", "VV"]
 RATElab = {"CC": "C", "VC": "V", "CV": "C", "VV": "V"}; BIASlab = {"CC": "C", "VC": "C", "CV": "V", "VV": "V"}
 MTITLE = {"CC": "Constant rate, constant bias", "VC": "Time-varying rate, constant bias",
           "CV": "Constant rate, time-varying bias", "VV": "Time-varying rate, time-varying bias"}
-
+ 
 def save(fig, stem):
     fig.savefig(f"{OUTDIR}/{stem}.png", dpi=200, bbox_inches="tight")
     fig.savefig(f"{OUTDIR}/{stem}.svg", bbox_inches="tight"); plt.close(fig)
-
+ 
 def fix_svg_fonts():
     pat = re.compile(r"font-family:[^;\"}]*"); repl = "font-family:Arial, 'Liberation Sans', Helvetica, sans-serif"
-    for f in glob.glob(f"{OUTDIR}/fig5*.svg") + glob.glob(f"{OUTDIR}/figS[34]*.svg"):
+    for f in glob.glob(f"{OUTDIR}/fig5*.svg") + glob.glob(f"{OUTDIR}/figS[3-6]*.svg"):
         s = open(f, encoding="utf-8").read(); open(f, "w", encoding="utf-8").write(pat.sub(repl, s))
-
+ 
 # ---- fit panels (5D, 5J) ----
 def _fit_axis(ax, cond, cell, tsim):
     c = CELL[cond][cell]
@@ -276,7 +276,7 @@ def _fit_axis(ax, cond, cell, tsim):
     ax.set_title(CELLTITLE[cell], color=c, fontsize=10, fontweight="bold", pad=3)
     ax.set_xlabel("Time (days)", fontsize=8.5); ax.tick_params(labelsize=8)
     ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
-
+ 
 def draw_fit(fig, gs_row, cond, rowlabel=""):
     tsim = np.linspace(9, 22, 80); first = None
     for j, cell in enumerate(["P", "N", "G"]):
@@ -287,18 +287,18 @@ def draw_fit(fig, gs_row, cond, rowlabel=""):
     if rowlabel:
         first.text(-0.55, 0.5, rowlabel, transform=first.transAxes, rotation=90, ha="center", va="center",
                    fontsize=11, fontweight="bold", color="#333")
-
+ 
 def fit_legend(fig):
     h = [Line2D([0], [0], color=LINE[m][0], ls=LINE[m][1], lw=1.2, label=f"{m[0]}/{m[1]}") for m in ORDER4]
     fig.legend(handles=h, title="Rate/Bias", loc="upper right", fontsize=6.5, title_fontsize=6.5,
                frameon=False, bbox_to_anchor=(0.995, 0.99))
-
+ 
 # ---- violin panels (5E-H, 5K-N) ----
 def _violins(ax, datasets, positions, colors, width=0.75):
     parts = ax.violinplot(datasets, positions=positions, widths=width, showextrema=False)
     for pc, c in zip(parts["bodies"], colors): pc.set_facecolor(c); pc.set_edgecolor("none"); pc.set_alpha(1.0)
     for d, x in zip(datasets, positions): ax.hlines(np.median(d), x - width/2, x + width/2, color="white", lw=1.6, zorder=4)
-
+ 
 def _annot(ax, positions, models, conds=None):
     tr = ax.get_xaxis_transform(); y0 = -0.10
     ax.text(-0.02, y0, "Rate:", transform=ax.transAxes, ha="right", va="top", fontsize=7, color="#333")
@@ -310,18 +310,18 @@ def _annot(ax, positions, models, conds=None):
         ax.text(x, y0 - 0.09, BIASlab[m], transform=tr, ha="center", va="top", fontsize=7, color="#333")
         if conds is not None:
             ax.text(x, y0 - 0.18, "\u2212" if conds[i] == "dmso" else "+", transform=tr, ha="center", va="top", fontsize=8, color="#333")
-
+ 
 def _vstyle(ax, ylabel, title, hline=None):
     ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False); ax.spines["bottom"].set_visible(False)
     ax.set_xticks([])
     if hline is not None: ax.axhline(hline, ls=":", color="#aaa", lw=0.9, zorder=0)
     ax.set_ylabel(ylabel, fontsize=9); ax.set_title(title, fontsize=9.5); ax.tick_params(labelsize=8)
-
+ 
 def violin_single(ax, cond, param, models, ylabel, title, colmap, hline=None):
     data = [col(chain(cond, m), param) for m in models]; pos = list(range(len(models)))
     _violins(ax, data, pos, [colmap[cond]] * len(models)); _annot(ax, pos, models)
     _vstyle(ax, ylabel, title, hline); ax.set_xlim(-0.7, len(models) - 0.3)
-
+ 
 def violin_combined(ax, param, models, ylabel, title, colmap, hline=None):
     data = []; pos = []; cols = []; mods = []; conds = []; x = 0.0
     for cond in ["dmso", "dapt"]:
@@ -330,7 +330,7 @@ def violin_combined(ax, param, models, ylabel, title, colmap, hline=None):
         x += 0.8
     _violins(ax, data, pos, cols); _annot(ax, pos, mods, conds)
     _vstyle(ax, ylabel, title, hline); ax.set_xlim(-0.7, pos[-1] + 0.7)
-
+ 
 # ---- S3/S4 PPC panels (A-D) ----
 def draw_ppc(ax, cond, m, ndraw=NDRAW):
     tsim = np.linspace(9, 22, 60); ch = chain(cond, m); tvk, tvr = MODELS[m]
@@ -359,13 +359,13 @@ def draw_ppc(ax, cond, m, ndraw=NDRAW):
     ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
     ax.legend(handles=[Line2D([0], [0], color=CELL[cond][c], lw=2, label=LBL[c]) for c in ["P", "N", "G"]],
               fontsize=6.5, frameon=False, loc="upper right")
-
+ 
 # ---- S3/S4 parameter marginals (E) ----
 EPARAMS = [("P0", "$P_0$", "ALL", "POP"), ("alpha", r"$\alpha$", "ALL", "POP"), ("aU", r"$\alpha_U$", "ALL", "POP"),
            ("k0", "$k_0$", "ALL", "RATE"), ("k1", "$k_1$", "VRATE", "RATE"), ("rho0", r"$\rho^0$", "ALL", "BIAS"),
            ("rho1", r"$\rho^1$", "VBIAS", "BIAS")]
 MSET = {"ALL": ORDER4, "VRATE": VRATE, "VBIAS": VBIAS}; GROUP = {"RATE": RATE, "BIAS": BIAS, "POP": POP}
-
+ 
 def draw_params(fig, gs_area, cond):
     inner = gridspec.GridSpecFromSubplotSpec(2, 4, subplot_spec=gs_area, hspace=0.75, wspace=0.55)
     for idx, (key, lab, mkey, grp) in enumerate(EPARAMS):
@@ -378,7 +378,7 @@ def draw_params(fig, gs_area, cond):
         ax.set_title(lab, fontsize=10); ax.tick_params(labelsize=7)
         ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
     fig.add_subplot(inner[1, 3]).axis("off")
-
+ 
 # ---- builders ----
 def build_fig5_fits():
     for cond, tag in [("dmso", "fig5D_fit_dmso"), ("dapt", "fig5J_fit_dapt")]:
@@ -393,7 +393,7 @@ def build_fig5_fits():
                  "lines = 4 models (black=const rate / red=varying rate; solid=const bias / dashed=varying bias); "
                  "boxes/dots = data (open = biological-replicate means)", fontsize=8.5, y=0.99)
     save(fig, "fig5DJ_fits_overview")
-
+ 
 def build_fig5_violins():
     RL = "initial rate, k$^0$ (day$^{-1}$)"; GL = "gradient, k$^1$ (day$^{-2}$)"
     BL = r"neuronal bias, $\rho^0$"; BG = r"gradient, $\rho^1$ (day$^{-1}$)"
@@ -422,7 +422,7 @@ def build_fig5_violins():
     fig.suptitle("Figure 5 marginal-posterior panels \u2014 violin plots\n"
                  "white line = median; purple = rate, gold = neuronal bias; lighter = DMSO, darker = DAPT", fontsize=10, y=1.0)
     save(fig, "fig5_violin_panels_overview")
-
+ 
 def build_supp(cond, tag):
     for letter, m in zip("ABCD", ORDER4):
         fig, ax = plt.subplots(figsize=(3.4, 3.0)); draw_ppc(ax, cond, m); fig.tight_layout(); save(fig, f"fig{tag}{letter}_ppc_{m}_{cond}")
@@ -433,11 +433,140 @@ def build_supp(cond, tag):
     cn = "DMSO" if cond == "dmso" else "DAPT"
     fig.suptitle(f"Figure {tag} ({cn}) \u2014 posterior predictive checks (A\u2013D, {NDRAW} draws) and parameter marginals (E)", fontsize=10, y=0.98)
     save(fig, f"fig{tag}_overview")
-
-def make_all_figures():
-    build_fig5_fits(); build_fig5_violins(); build_supp("dmso", "S3"); build_supp("dapt", "S4"); fix_svg_fonts()
+ 
+# ---- Figure S6: ENS-compartment-normalised proportions ----
+# The reviewer-requested view: proportions taken relative to the ENS compartment
+# (P+N+G) rather than to all cells. Because U is dynamically uncoupled from the
+# ENS lineages and the (P,N,G) subsystem is homogeneous linear, these normalised
+# proportions are independent of both alpha_U and P0 -- no re-fitting is needed,
+# the same posteriors are simply re-expressed.
+ENSC = {"dmso": "#555555", "dapt": "#222222"}
+ENSTITLE = {"E": "ENS fraction of all cells", "P": "Progenitors (ENS-normalised)",
+            "N": "Neurons (ENS-normalised)", "G": "Glia (ENS-normalised)"}
+ENSKEYS = ["E", "P", "N", "G"]
+ 
+ 
+def biol_map(cell, cond, day):
+    """Per-biological-replicate mean fraction of all cells, keyed by replicate id."""
+    d = {}
+    for b, f in _data()[cell].get((cond, day), []):
+        d.setdefault(b, []).append(f)
+    return {b: float(np.mean(v)) for b, v in d.items()}
+ 
+ 
+def ens_biol(cond, day):
+    """Empirical ENS-normalised proportions, per biological replicate.
+ 
+    The neuron (HuC/D) and progenitor/glia (SOX10/S100b) counts come from
+    SEPARATE stain fields, so the ENS denominator must be formed by combining
+    the two fields for the SAME biological replicate -- matched on replicate id,
+    not on position in the file. This assumes, as the observation model already
+    does, that both fields sample the same underlying population.
+    """
+    mP, mN, mG = (biol_map(c, cond, day) for c in ("P", "N", "G"))
+    reps = sorted(set(mP) & set(mN) & set(mG))
+    P = np.array([mP[b] for b in reps])
+    N = np.array([mN[b] for b in reps])
+    G = np.array([mG[b] for b in reps])
+    E = P + N + G
+    return {"E": E, "P": P / E, "N": N / E, "G": G / E}
+ 
+ 
+def ens_model(cond, m, ts):
+    """Model trajectories re-expressed relative to the ENS compartment."""
+    tr = sim_median(cond, m, ts)
+    E = tr["P"] + tr["N"] + tr["G"]
+    return {"E": E, "P": tr["P"] / E, "N": tr["N"] / E, "G": tr["G"] / E}
+ 
+ 
+def _ens_axis(ax, cond, key, tsim):
+    c = ENSC[cond] if key == "E" else CELL[cond][key]
+    for m in ORDER4:
+        lc, ls = LINE[m]
+        ax.plot(tsim, ens_model(cond, m, tsim)[key], color=lc, ls=ls, lw=1.1, alpha=0.9, zorder=2)
+    for day in DAYS:
+        v = ens_biol(cond, day)[key]
+        if len(v):
+            ax.scatter(np.full_like(v, float(day)) + rng.uniform(-0.4, 0.4, len(v)), v,
+                       s=30, facecolors="none", edgecolors=c, lw=1.3, zorder=5)
+            ax.hlines(np.mean(v), day - 0.9, day + 0.9, color=c, lw=1.8, zorder=6)
+    ax.set_xlim(8, 23); ax.set_xticks([9, 15, 22]); ax.set_ylim(0, 1.0)
+    ax.set_title(ENSTITLE[key], color=c, fontsize=9, fontweight="bold", pad=3)
+    ax.set_xlabel("Time (days)", fontsize=8.5); ax.tick_params(labelsize=8)
+    ax.spines["top"].set_visible(False); ax.spines["right"].set_visible(False)
+ 
+ 
+def _ens_legend(fig, y=-0.01):
+    """Legend below the axes: the upper-right position used elsewhere collides
+    with the title of the rightmost panel in this four-column layout."""
+    h = [Line2D([0], [0], color=LINE[m][0], ls=LINE[m][1], lw=1.2, label=f"{m[0]}/{m[1]}")
+         for m in ORDER4]
+    fig.legend(handles=h, title="Rate/Bias", loc="lower center", ncol=4, fontsize=7,
+               title_fontsize=7, frameon=False, bbox_to_anchor=(0.5, y))
+ 
+ 
+def build_figS6():
+    tsim = np.linspace(9, 22, 80)
+    for cond, tag in [("dmso", "S6A"), ("dapt", "S6B")]:
+        fig = plt.figure(figsize=(8.8, 2.6))
+        gs = gridspec.GridSpec(1, 4, wspace=0.30, left=0.07, right=0.99, top=0.80, bottom=0.22)
+        for j, k in enumerate(ENSKEYS):
+            ax = fig.add_subplot(gs[0, j])
+            if j == 0:
+                ax.set_ylabel("Proportion", fontsize=9)
+            _ens_axis(ax, cond, k, tsim)
+        _ens_legend(fig, y=-0.06)
+        save(fig, f"fig{tag}_ens_normalised_{cond}")
+    fig = plt.figure(figsize=(9.4, 5.6))
+    gs = gridspec.GridSpec(2, 4, wspace=0.32, hspace=0.60, left=0.09, right=0.99, top=0.86, bottom=0.09)
+    for i, (cond, lab) in enumerate([("dmso", "DMSO"), ("dapt", "DAPT")]):
+        for j, k in enumerate(ENSKEYS):
+            ax = fig.add_subplot(gs[i, j])
+            if j == 0:
+                ax.set_ylabel("Proportion", fontsize=9)
+                ax.text(-0.42, 0.5, lab, transform=ax.transAxes, rotation=90, ha="center",
+                        va="center", fontsize=11, fontweight="bold", color="#333")
+            _ens_axis(ax, cond, k, tsim)
+    _ens_legend(fig, y=-0.01)
+    fig.suptitle("Figure S6 \u2014 proportions normalised to the ENS compartment (P+N+G)\n"
+                 "open circles = biological replicates, bar = mean; lines = 4 models "
+                 "(black=const rate / red=varying rate; solid=const bias / dashed=varying bias)",
+                 fontsize=8.5, y=0.99)
+    save(fig, "figS6_ens_normalised_overview")
+ 
+ 
+def ens_table(path=None):
+    """Numbers underlying Fig. S6, for the Results text and figure legend."""
+    L = ["ENS-compartment-normalised proportions (biological-replicate means)",
+         "E = ENS fraction of all cells; P/N/G normalised by E", ""]
+    L.append(f"{'cond':6s} {'day':>4s} {'n_rep':>6s} {'ENS/total':>10s} "
+             f"{'P/E':>7s} {'N/E':>7s} {'G/E':>7s}")
+    for cond in ("dmso", "dapt"):
+        for day in DAYS:
+            v = ens_biol(cond, day)
+            L.append(f"{cond:6s} {day:4d} {len(v['E']):6d} {np.mean(v['E']):10.3f} "
+                     f"{np.mean(v['P']):7.3f} {np.mean(v['N']):7.3f} {np.mean(v['G']):7.3f}")
+    L.append("")
+    L.append("raw (fraction of all cells) vs ENS-normalised, D15 -> D22:")
+    for cond in ("dmso", "dapt"):
+        a, b = ens_biol(cond, 15), ens_biol(cond, 22)
+        for k in ("P", "N", "G"):
+            raw15 = np.mean(a[k] * a["E"]); raw22 = np.mean(b[k] * b["E"])
+            n15, n22 = np.mean(a[k]), np.mean(b[k])
+            L.append(f"  {cond} {k}: raw {raw15:.3f}->{raw22:.3f} ({raw22/raw15:.2f}x)   "
+                     f"ENS-normalised {n15:.3f}->{n22:.3f} ({n22/n15:.2f}x)")
+    txt = "\n".join(L)
+    print(txt)
+    if path:
+        open(path, "w").write(txt + "\n")
+ 
+ 
+ 
+    build_fig5_fits(); build_fig5_violins(); build_supp("dmso", "S3"); build_supp("dapt", "S4")
+    build_figS6(); fix_svg_fonts()
+    ens_table(f"{OUTDIR}/ens_normalised_table.txt")
     print("all figure panels written to", OUTDIR)
-
+ 
 # ========================= STATISTICS ===============================
 # Posterior summaries supporting the quantitative claims in the Results text:
 #   (i)   level parameters (k0, rho0) are comparable across model specifications;
@@ -451,7 +580,7 @@ def make_all_figures():
 # difference" between them is not a well-defined contrast. Credible-interval
 # overlap is reported descriptively, as robustness across specifications --
 # it is NOT a test of equality. Only the cross-condition contrast is a contrast.
-
+ 
 CI_LEVEL = 95.0                 # equal-tailed credible interval (%)
 NPAIR    = 200_000              # draws for cross-condition contrasts
 PRIOR_SD = {"k1": 0.05, "rho1": 0.05}    # Normal(0, sd) priors on the gradients
@@ -459,33 +588,33 @@ STATS_SEED = 0
 TSPAN = 22.0 - T0               # observation window, days (D9 -> D22)
 CONDS = ["dmso", "dapt"]
 CONDLBL = {"dmso": "DMSO (control)", "dapt": "DAPT (Notch-inhibited)"}
-
-
+ 
+ 
 def _flat(cond, m, key):
     """Flattened posterior draws, or None if the parameter is absent."""
     return col(chain(cond, m), key)
-
-
+ 
+ 
 def _is_fixed(x):
     """True if a stored 'parameter' is actually a constant (e.g. DAPT P0).
-
+ 
     Uses an exact range test: np.std on a repeated non-representable float
     returns ~1e-17 rather than 0, which would otherwise be summarised as a
     degenerate chain with n_eff ~ 4.
     """
     return np.ptp(np.asarray(x)) == 0.0
-
-
+ 
+ 
 def _ci(x, level=CI_LEVEL):
     lo = (100.0 - level) / 2.0
     return np.percentile(x, [lo, 100.0 - lo])
-
-
+ 
+ 
 def _pair(a, b, rng_):
     """Pair independent draws from two separate MCMC runs."""
     return a[rng_.choice(len(a), NPAIR)], b[rng_.choice(len(b), NPAIR)]
-
-
+ 
+ 
 def stat_level(cond, param, models, lines):
     """Median and CrI of a level parameter across model specifications."""
     lines.append(f"  {param}: median [{CI_LEVEL:.0f}% CrI] by model")
@@ -503,8 +632,8 @@ def stat_level(cond, param, models, lines):
         lines.append(f"     range of medians: {min(meds):.3f} to {max(meds):.3f} "
                      f"(spread {spread:.3f} = {100*spread/np.mean(meds):.0f}% of mean)")
     return vals
-
-
+ 
+ 
 def stat_overlap(vals, lines):
     """Pairwise CrI overlap -- descriptive robustness, not a test (see header)."""
     if len(vals) < 2:
@@ -522,8 +651,8 @@ def stat_overlap(vals, lines):
             frac = 100 * ov / min(ha - la, hb - lb)
             lines.append(f"     {a} vs {b}:  overlap {ov:+.3f}  ({frac:.0f}% of narrower CrI)")
     lines.append(f"     ALL PAIRS OVERLAP: {allov}")
-
-
+ 
+ 
 def stat_gradient(cond, param, models, lines):
     """CrI, posterior contraction against the prior, and sign probability."""
     psd = PRIOR_SD.get(param)
@@ -539,8 +668,8 @@ def stat_gradient(cond, param, models, lines):
                      f"contraction {100*contraction:.1f}%")
         lines.append(f"           P({param} < 0 | data) = {float((x < 0).mean()):.3f}   "
                      f"CrI contains zero: {bool(lo < 0 < hi)}")
-
-
+ 
+ 
 def stat_implied_rate(cond, models, lines):
     """Propagate the gradient: what change in k does the posterior actually imply?"""
     lines.append(f"  implied change in differentiation rate over D{T0:.0f}-D22 "
@@ -555,8 +684,8 @@ def stat_implied_rate(cond, models, lines):
         lines.append(f"           P(rate falls by >50%)            = {float((ratio < 0.5).mean()):.3f}")
         lines.append(f"           P(rate within +/-25% of initial) = "
                      f"{float(((ratio > 0.75) & (ratio < 1.25)).mean()):.3f}")
-
-
+ 
+ 
 def stat_contrast(param, models, lines, ratio=True):
     """DAPT vs DMSO. A genuine contrast: separate datasets, separate chains."""
     rng_ = np.random.default_rng(STATS_SEED)
@@ -589,8 +718,8 @@ def stat_contrast(param, models, lines, ratio=True):
             r = np.concatenate(pooled_r)
             rl, rh = _ci(r)
             lines.append(f"     pooled ratio median {np.median(r):.2f}  [{rl:.2f}, {rh:.2f}]")
-
-
+ 
+ 
 def stat_convergence(lines):
     """Rhat / n_eff recomputed from the stored chains."""
     if not _HAVE_JAX:
@@ -612,8 +741,8 @@ def stat_convergence(lines):
             lines.append(f"     {cond:5s} {m}:  worst Rhat={worst:.4f}  min n_eff={mineff:.0f}{flag}")
             if det:
                 lines.append(f"              {det}")
-
-
+ 
+ 
 def stats_table_csv(path):
     """Machine-readable version of the main per-model summaries."""
     rows = [("condition", "model", "parameter", "median",
@@ -633,8 +762,8 @@ def stats_table_csv(path):
                              f"{contr:.4f}" if psd else "", f"{float((x < 0).mean()):.4f}"))
     with open(path, "w", newline="") as fh:
         csv.writer(fh).writerows(rows)
-
-
+ 
+ 
 def report_statistics():
     """Build, print and write the full statistical report."""
     missing = [(c, m) for c in CONDS for m in ORDER4
@@ -652,7 +781,7 @@ def report_statistics():
          "are genuine contrasts (separate datasets, separate chains), subject to the",
          "caveat that DAPT P0 is fixed to the DMSO median by design.",
          ""]
-
+ 
     fixed = []
     for m in ORDER4:
         x = _flat("dapt", m, "P0")
@@ -661,7 +790,7 @@ def report_statistics():
     if fixed:
         L += ["DAPT P0 fixed to the DMSO median per model: " + ", ".join(fixed) +
               " (excluded from the summaries below, being constant).", ""]
-
+ 
     for cond in CONDS:
         L += [f"---------------- {CONDLBL[cond]} ----------------", ""]
         L.append(" [differentiation rate]")
@@ -675,7 +804,7 @@ def report_statistics():
         stat_overlap(vals, L)
         stat_gradient(cond, "rho1", VBIAS, L)
         L.append("")
-
+ 
     L += ["---------------- CROSS-CONDITION CONTRASTS (DAPT vs DMSO) ----------------", ""]
     L.append(" [differentiation rate]")
     stat_contrast("k0", ORDER4, L, ratio=True)
@@ -689,11 +818,11 @@ def report_statistics():
     L.append(" [bias gradient]")
     stat_contrast("rho1", VBIAS, L, ratio=False)
     L.append("")
-
+ 
     L += ["---------------- CONVERGENCE ----------------", ""]
     stat_convergence(L)
     L.append("")
-
+ 
     txt = "\n".join(L)
     print(txt)
     os.makedirs(OUTDIR, exist_ok=True)
@@ -701,8 +830,8 @@ def report_statistics():
     stats_table_csv(f"{OUTDIR}/posterior_statistics.csv")
     print(f"\nwritten: {OUTDIR}/posterior_statistics.txt")
     print(f"written: {OUTDIR}/posterior_statistics.csv")
-
-
+ 
+ 
 # ============================= MAIN =================================
 def main():
     ap = argparse.ArgumentParser(description="Gogolou et al. modelling pipeline")
@@ -719,6 +848,7 @@ def main():
         run_inference()
     make_all_figures()
     report_statistics()
-
+ 
 if __name__ == "__main__":
     main()
+ 
